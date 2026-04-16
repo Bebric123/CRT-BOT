@@ -1,4 +1,4 @@
-"""SQLite persistence: whitelist, settings, hourly rate limits."""
+"""SQLite persistence: whitelist, settings, rate limits."""
 
 from __future__ import annotations
 
@@ -7,10 +7,25 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from bot import defaults as D
+
 
 class Storage:
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        default_rate_limit_sec: int = D.RATE_LIMIT_SECONDS_DEFAULT,
+        default_llm_max_output_chars: int = D.LOCAL_LLM_MAX_OUTPUT_CHARS_DEFAULT,
+    ) -> None:
         self._path = path
+        self._default_rate_limit_sec = max(
+            D.RATE_LIMIT_SECONDS_MIN,
+            min(D.RATE_LIMIT_SECONDS_MAX, int(default_rate_limit_sec)),
+        )
+        self._default_llm_max_output_chars = max(
+            D.LOCAL_LLM_MAX_OUTPUT_CHARS_MIN,
+            min(D.LOCAL_LLM_MAX_OUTPUT_CHARS_MAX, int(default_llm_max_output_chars)),
+        )
         self._init_db()
 
     @contextmanager
@@ -48,6 +63,31 @@ class Storage:
                 conn.execute(
                     "INSERT INTO settings (key, value) VALUES ('hashtag', '#predict_week')"
                 )
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('rate_limit_period_sec', ?)",
+                    (str(self._default_rate_limit_sec),),
+                )
+                conn.execute(
+                    "INSERT INTO settings (key, value) VALUES ('llm_max_output_chars', ?)",
+                    (str(self._default_llm_max_output_chars),),
+                )
+            else:
+                cur2 = conn.execute(
+                    "SELECT 1 FROM settings WHERE key = 'rate_limit_period_sec'"
+                )
+                if cur2.fetchone() is None:
+                    conn.execute(
+                        "INSERT INTO settings (key, value) VALUES ('rate_limit_period_sec', ?)",
+                        (str(self._default_rate_limit_sec),),
+                    )
+                cur3 = conn.execute(
+                    "SELECT 1 FROM settings WHERE key = 'llm_max_output_chars'"
+                )
+                if cur3.fetchone() is None:
+                    conn.execute(
+                        "INSERT INTO settings (key, value) VALUES ('llm_max_output_chars', ?)",
+                        (str(self._default_llm_max_output_chars),),
+                    )
 
     def seed_whitelist(self, chat_ids: frozenset[int]) -> None:
         if not chat_ids:
@@ -115,7 +155,35 @@ class Storage:
             t = "#" + t
         self.set_setting("hashtag", t)
 
-    def rate_limit_seconds_left(self, user_id: int, period_sec: int = 60) -> int:
+    def get_rate_limit_period_sec(self) -> int:
+        raw = self.get_setting("rate_limit_period_sec", "")
+        try:
+            v = int(raw) if raw else self._default_rate_limit_sec
+        except ValueError:
+            v = self._default_rate_limit_sec
+        return max(D.RATE_LIMIT_SECONDS_MIN, min(D.RATE_LIMIT_SECONDS_MAX, v))
+
+    def set_rate_limit_period_sec(self, seconds: int) -> None:
+        v = max(D.RATE_LIMIT_SECONDS_MIN, min(D.RATE_LIMIT_SECONDS_MAX, int(seconds)))
+        self.set_setting("rate_limit_period_sec", str(v))
+
+    def get_llm_max_output_chars(self) -> int:
+        raw = self.get_setting("llm_max_output_chars", "")
+        try:
+            v = int(raw) if raw else self._default_llm_max_output_chars
+        except ValueError:
+            v = self._default_llm_max_output_chars
+        return max(D.LOCAL_LLM_MAX_OUTPUT_CHARS_MIN, min(D.LOCAL_LLM_MAX_OUTPUT_CHARS_MAX, v))
+
+    def set_llm_max_output_chars(self, n: int) -> None:
+        v = max(
+            D.LOCAL_LLM_MAX_OUTPUT_CHARS_MIN,
+            min(D.LOCAL_LLM_MAX_OUTPUT_CHARS_MAX, int(n)),
+        )
+        self.set_setting("llm_max_output_chars", str(v))
+
+    def rate_limit_seconds_left(self, user_id: int, period_sec: int | None = None) -> int:
+        period = self.get_rate_limit_period_sec() if period_sec is None else period_sec
         now = time.time()
         with self._conn() as conn:
             row = conn.execute(
@@ -124,9 +192,9 @@ class Storage:
         if not row:
             return 0
         elapsed = now - float(row["last_ts"])
-        if elapsed >= period_sec:
+        if elapsed >= period:
             return 0
-        return int(period_sec - elapsed)
+        return int(period - elapsed)
 
     def touch_rate_limit(self, user_id: int) -> None:
         now = time.time()

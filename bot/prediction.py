@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import datetime
 import io
+import logging
 import random
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
+
+logger = logging.getLogger(__name__)
 
 # Запасной пул, если LLM недоступна: про рабочую неделю + уточнение под текущий день недели.
 _PREDICTIONS_NEUTRAL_RU: list[str] = [
@@ -62,26 +65,61 @@ def pick_prediction() -> str:
     return random.choice(pool)
 
 
+def list_asset_image_paths(assets_dir: Path) -> list[Path]:
+    """Все .png и .jpg из папки (стабильный порядок)."""
+    return sorted(assets_dir.glob("*.png")) + sorted(assets_dir.glob("*.jpg"))
+
+
 def load_random_image_path(assets_dir: Path) -> Path | None:
-    files = sorted(assets_dir.glob("*.png")) + sorted(assets_dir.glob("*.jpg"))
+    files = list_asset_image_paths(assets_dir)
     return random.choice(files) if files else None
 
 
-def load_random_image_png_bytes(assets_dir: Path | None, max_side: int = 900) -> bytes | None:
-    """Случайный файл из папки, ресайз, PNG. Без текста на изображении."""
+def image_path_to_png_bytes(
+    path: Path,
+    *,
+    max_side: int = 900,
+    max_source_file_bytes: int = 25 * 1024 * 1024,
+) -> bytes | None:
+    """Один файл: ресайз, PNG. None при ошибке или слишком большом исходнике."""
+    try:
+        sz = path.stat().st_size
+    except OSError:
+        return None
+    if sz > max_source_file_bytes:
+        logger.warning("skip large asset file %s (%s bytes)", path.name, sz)
+        return None
+    try:
+        with Image.open(path) as im:
+            im = im.convert("RGB")
+            if getattr(im, "n_frames", 1) > 1:
+                im.seek(0)
+            im.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            im.save(buf, format="PNG", optimize=True)
+            return buf.getvalue()
+    except (OSError, ValueError, UnidentifiedImageError):
+        logger.warning("skip unreadable asset file %s", path.name)
+        return None
+
+
+def load_random_image_png_bytes(
+    assets_dir: Path | None,
+    *,
+    max_side: int = 900,
+    max_source_file_bytes: int = 25 * 1024 * 1024,
+) -> bytes | None:
+    """Случайный файл из папки, ресайз, PNG."""
     if not assets_dir:
         return None
     path = load_random_image_path(assets_dir)
     if not path:
         return None
-    with Image.open(path) as im:
-        im = im.convert("RGB")
-        if getattr(im, "n_frames", 1) > 1:
-            im.seek(0)
-        im.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
-        buf = io.BytesIO()
-        im.save(buf, format="PNG", optimize=True)
-        return buf.getvalue()
+    return image_path_to_png_bytes(
+        path,
+        max_side=max_side,
+        max_source_file_bytes=max_source_file_bytes,
+    )
 
 
 def split_for_photo_caption(text: str, limit: int = 1024) -> tuple[str, str | None]:
