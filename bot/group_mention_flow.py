@@ -48,8 +48,19 @@ def _reply_chain_messages(msg: Message) -> list[Message]:
     return out
 
 
+def _is_channel_mirror_message(msg: Message) -> bool:
+    """
+    Копия поста канала в группе обсуждения приходит как message.sender_chat=CHANNEL.
+    Хештег-триггер должен быть именно в посте, а не в комментарии пользователя.
+    """
+    sc = getattr(msg, "sender_chat", None)
+    return bool(sc is not None and getattr(sc, "type", None) == ChatType.CHANNEL)
+
+
 def _thread_has_hashtag(msg: Message, hashtag: str) -> bool:
     for m in _reply_chain_messages(msg):
+        if not _is_channel_mirror_message(m):
+            continue
         if text_has_trigger_hashtag(_message_text(m), hashtag):
             return True
     return False
@@ -399,17 +410,16 @@ async def _try_prepare_group_prediction(
         msg, cache, tag, chat.id, in_reply_chain, msg.message_thread_id
     )
 
-    period = storage.get_rate_limit_period_sec()
     if rate_uid is not None:
-        left = storage.rate_limit_seconds_left(rate_uid, period)
-        if left > 0:
+        allowed, left = storage.try_consume_rate_limit(rate_uid)
+        if not allowed and left > 0:
             await reject(
                 f"Уже выдавали предсказание недавно. Следующий раз через {_format_wait(left)}.",
                 "rate_limit",
             )
             return None
 
-    return _ReadyGroupPrediction(msg=msg, rate_uid=rate_uid, post_text=post_text)
+    return _ReadyGroupPrediction(msg=msg, rate_uid=None, post_text=post_text)
 
 
 async def _deliver_group_prediction(
@@ -420,9 +430,7 @@ async def _deliver_group_prediction(
 ) -> None:
     prediction = await _prediction_text_after_moderation(work.post_text, runtime, storage)
     image_bytes = await _load_validated_image(assets_dir, runtime)
-    await _send_prediction_reply(
-        work.msg, prediction, image_bytes, work.rate_uid, storage
-    )
+    await _send_prediction_reply(work.msg, prediction, image_bytes, None, storage)
 
 
 async def handle_group_message(

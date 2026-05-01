@@ -206,3 +206,35 @@ class Storage:
                 """,
                 (user_id, now),
             )
+
+    def try_consume_rate_limit(self, user_id: int, period_sec: int | None = None) -> tuple[bool, int]:
+        """
+        Атомарная проверка+обновление rate limit в одной транзакции.
+
+        Возвращает (allowed, seconds_left). seconds_left=0 если allowed=True.
+        """
+        period = self.get_rate_limit_period_sec() if period_sec is None else int(period_sec)
+        now = time.time()
+        with self._conn() as conn:
+            # Если запись отсутствует — создаём. Если есть — обновляем только если прошло period секунд.
+            cur = conn.execute(
+                """
+                INSERT INTO rate_limits (user_id, last_ts) VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE
+                SET last_ts = excluded.last_ts
+                WHERE excluded.last_ts - rate_limits.last_ts >= ?
+                """,
+                (user_id, now, period),
+            )
+            if cur.rowcount == 1:
+                return True, 0
+
+            row = conn.execute(
+                "SELECT last_ts FROM rate_limits WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+            if not row:
+                return True, 0
+            elapsed = now - float(row["last_ts"])
+            left = 0 if elapsed >= period else int(period - elapsed)
+            return False, max(0, left)

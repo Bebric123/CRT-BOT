@@ -24,6 +24,16 @@ def test_rate_limit_period_default_and_set():
         assert s2.get_rate_limit_period_sec() == 300
 
 
+def test_try_consume_rate_limit_atomic():
+    with tempfile.TemporaryDirectory() as td:
+        p = Path(td) / "rl.db"
+        s = Storage(p, default_rate_limit_sec=3600, default_llm_max_output_chars=2400)
+        ok, left = s.try_consume_rate_limit(123, period_sec=5)
+        assert ok is True and left == 0
+        ok2, left2 = s.try_consume_rate_limit(123, period_sec=5)
+        assert ok2 is False and left2 > 0
+
+
 def test_llm_max_output_chars_persisted():
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "m.db"

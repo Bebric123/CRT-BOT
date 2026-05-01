@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from functools import partial
 from pathlib import Path
 
 from telegram import Update
@@ -111,62 +112,40 @@ def _register_handlers(
     storage: Storage,
     admins: frozenset[int],
 ) -> None:
-    async def wrap_start(u, c):
-        await cmd_start(u, c, admins)
-
-    async def wrap_help(u, c):
-        await cmd_help_admin(u, c, admins)
-
-    async def wrap_add(u, c):
-        await cmd_add_whitelist(u, c, storage, admins)
-
-    async def wrap_rem(u, c):
-        await cmd_remove_whitelist(u, c, storage, admins)
-
-    async def wrap_list(u, c):
-        await cmd_list_whitelist(u, c, storage, admins)
-
-    async def wrap_chat_id(u, c):
-        await cmd_chat_id(u, c, admins)
-
-    async def wrap_seth(u, c):
-        await cmd_set_hashtag(u, c, storage, admins)
-
-    async def wrap_geth(u, c):
-        await cmd_get_hashtag(u, c, storage, admins)
-
-    async def wrap_set_rl(u, c):
-        await cmd_set_rate_limit(u, c, storage, admins)
-
-    async def wrap_set_llm_ch(u, c):
-        await cmd_set_llm_max_chars(u, c, storage, admins)
-
-    async def wrap_on(u, c):
-        await cmd_bot_on(u, c, storage, admins)
-
-    async def wrap_off(u, c):
-        await cmd_bot_off(u, c, storage, admins)
-
-    async def wrap_status(u, c):
-        await cmd_status(u, c, storage, admins)
-
-    async def wrap_hide_kb(u, c):
-        await cmd_hide_keyboard(u, c, admins)
-
-    application.add_handler(CommandHandler("start", wrap_start))
-    application.add_handler(CommandHandler("help_admin", wrap_help))
-    application.add_handler(CommandHandler("add_whitelist", wrap_add))
-    application.add_handler(CommandHandler("remove_whitelist", wrap_rem))
-    application.add_handler(CommandHandler("list_whitelist", wrap_list))
-    application.add_handler(CommandHandler("chat_id", wrap_chat_id))
-    application.add_handler(CommandHandler("set_hashtag", wrap_seth))
-    application.add_handler(CommandHandler("get_hashtag", wrap_geth))
-    application.add_handler(CommandHandler("set_rate_limit", wrap_set_rl))
-    application.add_handler(CommandHandler("set_llm_max_chars", wrap_set_llm_ch))
-    application.add_handler(CommandHandler("bot_on", wrap_on))
-    application.add_handler(CommandHandler("bot_off", wrap_off))
-    application.add_handler(CommandHandler("status", wrap_status))
-    application.add_handler(CommandHandler("hide_keyboard", wrap_hide_kb))
+    application.add_handler(CommandHandler("start", partial(cmd_start, admin_ids=admins)))
+    application.add_handler(CommandHandler("help_admin", partial(cmd_help_admin, admin_ids=admins)))
+    application.add_handler(
+        CommandHandler("add_whitelist", partial(cmd_add_whitelist, storage=storage, admin_ids=admins))
+    )
+    application.add_handler(
+        CommandHandler(
+            "remove_whitelist", partial(cmd_remove_whitelist, storage=storage, admin_ids=admins)
+        )
+    )
+    application.add_handler(
+        CommandHandler("list_whitelist", partial(cmd_list_whitelist, storage=storage, admin_ids=admins))
+    )
+    application.add_handler(CommandHandler("chat_id", partial(cmd_chat_id, admin_ids=admins)))
+    application.add_handler(
+        CommandHandler("set_hashtag", partial(cmd_set_hashtag, storage=storage, admin_ids=admins))
+    )
+    application.add_handler(
+        CommandHandler("get_hashtag", partial(cmd_get_hashtag, storage=storage, admin_ids=admins))
+    )
+    application.add_handler(
+        CommandHandler("set_rate_limit", partial(cmd_set_rate_limit, storage=storage, admin_ids=admins))
+    )
+    application.add_handler(
+        CommandHandler(
+            "set_llm_max_chars", partial(cmd_set_llm_max_chars, storage=storage, admin_ids=admins)
+        )
+    )
+    application.add_handler(CommandHandler("bot_on", partial(cmd_bot_on, storage=storage, admin_ids=admins)))
+    application.add_handler(
+        CommandHandler("bot_off", partial(cmd_bot_off, storage=storage, admin_ids=admins))
+    )
+    application.add_handler(CommandHandler("status", partial(cmd_status, storage=storage, admin_ids=admins)))
+    application.add_handler(CommandHandler("hide_keyboard", partial(cmd_hide_keyboard, admin_ids=admins)))
 
     application.add_handler(
         MessageHandler(filters.ChatType.GROUPS, track_discussion_channel_mirror),
@@ -221,7 +200,7 @@ def main() -> None:
     application = (
         Application.builder()
         .token(settings.bot_token)
-        .concurrent_updates(True)
+        .concurrent_updates(settings.concurrent_updates)
         .connect_timeout(conn_t)
         .read_timeout(read_t)
         .write_timeout(write_t)

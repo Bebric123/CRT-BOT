@@ -31,6 +31,13 @@ def _float_env(key: str, default: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
+def _bool_env(key: str, default: bool = False) -> bool:
+    raw = os.environ.get(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 def _resolve_image_moderation_provider() -> str:
     """
     none | sightengine | custom_url.
@@ -334,6 +341,7 @@ class Settings:
     image_max_side: int
     image_safety: ImageSafetyConfig | None
     text_moderation: TextModerationConfig
+    concurrent_updates: bool
 
     def group_mention_runtime(self) -> GroupMentionRuntime:
         max_src = (
@@ -383,6 +391,7 @@ class Settings:
         image_safety = _image_safety_from_env()
         local_llm = _local_llm_from_env()
         text_moderation = _text_moderation_from_env()
+        concurrent_updates = _bool_env("CONCURRENT_UPDATES", False)
 
         return cls(
             bot_token=token,
@@ -402,4 +411,5 @@ class Settings:
             image_max_side=img_side,
             image_safety=image_safety,
             text_moderation=text_moderation,
+            concurrent_updates=concurrent_updates,
         )
